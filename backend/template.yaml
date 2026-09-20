@@ -243,6 +243,8 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref AudioCacheBucket
+        - S3ReadPolicy:
+            BucketName: !Ref SchemeDocsBucket
         - DynamoDBCrudPolicy:
             TableName: !Ref SessionsTable
         - Statement:

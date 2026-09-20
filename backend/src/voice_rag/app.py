@@ -3,6 +3,7 @@ import json
 import time
 import hashlib
 import logging
+import urllib.parse
 
 import boto3
 from botocore.exceptions import ClientError
@@ -86,6 +87,40 @@ def _response(status: int, body: dict) -> dict:
         "body": json.dumps(body, ensure_ascii=False),
     }
 
+def _sign_s3_url(uri: str) -> str:
+    if not uri:
+        return ""
+    try:
+        bucket = ""
+        key = ""
+        if uri.startswith("s3://"):
+            parts = uri[5:].split("/", 1)
+            bucket = parts[0]
+            key = urllib.parse.unquote(parts[1]) if len(parts) > 1 else ""
+        elif "s3.amazonaws.com" in uri:
+            parsed = urllib.parse.urlparse(uri)
+            bucket = parsed.netloc.split(".s3")[0]
+            key = urllib.parse.unquote(parsed.path.lstrip("/"))
+        else:
+            return uri
+            
+        if bucket and key:
+            return s3.generate_presigned_url(
+                "get_object",
+                Params={
+                    "Bucket": bucket,
+                    "Key": key,
+                    "ResponseContentType": "application/pdf",
+                    "ResponseContentDisposition": "inline",
+                },
+                ExpiresIn=3600,
+            )
+        return uri
+    except Exception as e:
+        logger.warning("Failed to generate presigned PDF URL for %s: %s", uri, e)
+        return uri
+
+
 def _parse_citations(raw_citations) -> list:
     out, seen = [], set()
     for c in raw_citations or []:
@@ -97,18 +132,20 @@ def _parse_citations(raw_citations) -> list:
                 or meta.get("x-amz-bedrock-kb-source-page")
                 or "N/A"
             )
-            doc = (
+            raw_doc = (
                 uri.split("/")[-1].replace(".pdf", "").replace("-", " ").replace("_", " ").strip()
                 if uri else "Official document"
             )
-            key = f"{doc}:{page}"
+            clean_doc = urllib.parse.unquote(raw_doc)
+            clean_doc = " ".join(clean_doc.split())
+            key = f"{clean_doc}:{page}"
             if key in seen:
                 continue
             seen.add(key)
             out.append({
-                "document": doc,
+                "document": clean_doc,
                 "page": str(page).split(".")[0] if page != "N/A" else "N/A",
-                "s3_uri": uri,
+                "s3_uri": _sign_s3_url(uri),
                 "excerpt": (ref.get("content", {}).get("text", "") or "")[:300],
             })
     return out[:4]
