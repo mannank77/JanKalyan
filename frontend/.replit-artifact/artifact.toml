@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "JanSahayak"
+description = "A multilingual government scheme discovery app that helps people browse public benefits by language, compare translations, and use voice-first guidance to understand next steps."
+version = "1.0.0"
+id = "artifacts/jansahayak"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20479
+
+[services.development]
+run = "pnpm --filter @workspace/jansahayak run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/jansahayak", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/jansahayak/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20479"
+BASE_PATH = "/"
