@@ -429,8 +429,10 @@ export function VoiceDrawer({
   }, [recognizing, stopSpeechRecognition, startSpeechRecognition]);
 
   // Handle auto-start on mount if requested
+  const hasAutoStarted = useRef(false);
   useEffect(() => {
-    if (autoStart) {
+    if (autoStart && !hasAutoStarted.current) {
+      hasAutoStarted.current = true;
       const timer = setTimeout(() => {
         startSpeechRecognition();
       }, 350);
