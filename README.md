@@ -103,8 +103,15 @@ Compare multiple schemes in a matrix view — benefits, application steps, requi
 
 ---
 
-## 🗂️ Project Structure
+## 🏛️ System Architecture
 
+![JanKalyan End-to-End System Architecture](docs/architecture.svg)
+
+> Full architectural breakdown with sequence diagrams and security specifications available in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+---
+
+## 🗂️ Project Structure
 ```
 scheme-navigator/
 ├── backend/

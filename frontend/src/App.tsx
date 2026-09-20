@@ -48,6 +48,7 @@ function Home() {
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [voiceSchemeId, setVoiceSchemeId] = useState<string | undefined>();
   const [voiceSchemeName, setVoiceSchemeName] = useState<string | undefined>();
+  const [voiceAutoStart, setVoiceAutoStart] = useState(false);
   const [stateFilter, setStateFilter] = useState("All states");
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [appliedSchemes, setAppliedSchemes] = useState<string[]>([]);
@@ -83,10 +84,11 @@ function Home() {
     if (compareName === languageName) setCompareName(compareOptions[0]?.name ?? "English");
   }, [compareName, compareOptions, languageName]);
 
-  const openVoice = (scheme?: ApiScheme) => {
+  const openVoice = (scheme?: ApiScheme, autoStart = false) => {
     const localized = scheme ? getLocalizedScheme(scheme.id, languageName) : undefined;
     setVoiceSchemeId(scheme?.id);
     setVoiceSchemeName(localized?.name ?? scheme?.name);
+    setVoiceAutoStart(autoStart);
     setVoiceOpen(true);
   };
 
@@ -134,7 +136,7 @@ function Home() {
             <a href="#schemes" className="transition hover:text-[#263d35]" data-testid="link-browse-schemes">
               {t.navBrowseSchemes}
             </a>
-            <button type="button" onClick={() => openVoice()} className="transition hover:text-[#263d35]" data-testid="button-talk-header">
+            <button type="button" onClick={() => openVoice(undefined, true)} className="transition hover:text-[#263d35]" data-testid="button-talk-header">
               {t.navTalkToUs}
             </button>
           </nav>
@@ -249,7 +251,7 @@ function Home() {
               </a>
               <button
                 type="button"
-                onClick={() => openVoice()}
+                onClick={() => openVoice(undefined, true)}
                 className="inline-flex items-center gap-2 rounded-xl border border-[#b9935d] bg-[#f7e7c5] px-5 py-3.5 text-sm font-bold text-[#71462d] transition hover:bg-[#f9edda]"
                 data-testid="button-speak-instead"
               >
@@ -296,7 +298,7 @@ function Home() {
               </div>
               <button
                 type="button"
-                onClick={() => openVoice()}
+                onClick={() => openVoice(undefined, true)}
                 className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#263d35] py-3.5 text-sm font-bold text-[#fff8e9] transition hover:bg-[#36564a]"
                 data-testid="button-hero-listening"
               >
@@ -509,7 +511,7 @@ function Home() {
                 scheme={scheme}
                 language={current}
                 applied={appliedSchemes.includes(scheme.id)}
-                onCheck={() => openVoice(scheme)}
+                onCheck={() => openVoice(scheme, true)}
                 onApply={() => setAppliedSchemes((items) => (items.includes(scheme.id) ? items : [...items, scheme.id]))}
                 delay={index * 0.06}
               />
@@ -552,7 +554,7 @@ function Home() {
                 <button
                   type="button"
                   key={topic.title}
-                  onClick={() => openVoice()}
+                  onClick={() => openVoice(undefined, true)}
                   className="group rounded-2xl border border-[#e4dac7] bg-[#fffaf0] p-5 text-left transition hover:-translate-y-1 hover:border-[#cba56d]"
                   data-testid={`button-topic-${topic.title.toLowerCase().replaceAll(" ", "-")}`}
                 >
@@ -580,7 +582,7 @@ function Home() {
           </div>
           <button
             type="button"
-            onClick={() => openVoice()}
+            onClick={() => openVoice(undefined, true)}
             className="inline-flex items-center gap-2 self-start rounded-xl bg-[#f5d083] px-4 py-3 text-sm font-bold text-[#263d35]"
             data-testid="button-talk-footer"
           >
@@ -594,10 +596,12 @@ function Home() {
           language={current}
           schemeId={voiceSchemeId}
           schemeName={voiceSchemeName}
+          autoStart={voiceAutoStart}
           onClose={() => {
             setVoiceOpen(false);
             setVoiceSchemeId(undefined);
             setVoiceSchemeName(undefined);
+            setVoiceAutoStart(false);
           }}
         />
       ) : null}

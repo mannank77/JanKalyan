@@ -1,0 +1,59 @@
+flowchart TB
+    subgraph Client ["1. Client & Presentation Layer (Browser)"]
+        UI["React 19 + Vite Frontend\n(Tailwind CSS v4 + Radix UI)"]
+        STT["Web Speech Recognition API\n(Microphone Input)"]
+        TTS["Audio Streaming Player\n(+ Web Speech Synthesis Fallback)"]
+    end
+
+    subgraph Edge ["2. Edge & Ingress Layer"]
+        Amplify["AWS Amplify Hosting\n(Global CloudFront CDN + SSL)"]
+        APIGW["AWS HTTP API Gateway (v2)\n(/prod stage with CORS)"]
+    end
+
+    subgraph Compute ["3. Compute Layer (AWS Lambda - Python 3.14 ARM64)"]
+        FilterFn["Lambda: Filter Schemes\n(scheme-navigator-filter-schemes)"]
+        VoiceRagFn["Lambda: Voice RAG & Eligibility\n(scheme-navigator-voice-rag)"]
+    end
+
+    subgraph Data ["4. Persistence & Storage Layer"]
+        DDB_Schemes[("DynamoDB: GovSchemes Table\n(Schemes metadata, rules, benefits)")]
+        DDB_Sessions[("DynamoDB: Sessions Table\n(24h TTL Session Cache)")]
+        S3_Docs[("S3: Scheme Docs Bucket\n(Private - Official Ministry PDFs)")]
+        S3_Audio[("S3: Audio Cache Bucket\n(Private - MD5 cached Polly MP3s)")]
+    end
+
+    subgraph GenAI ["5. Generative AI & Language Intelligence Layer"]
+        BedrockKB["AWS Bedrock Knowledge Base\n(GovSchemesKB - ID: HDGCKVKYEE)"]
+        TitanEmbed["Amazon Titan Text Embeddings v1\n(1536-dim vector indexing)"]
+        Nova["Amazon Nova Foundation Models\n(nova-pro-v1:0 / nova-lite-v1:0)"]
+        Translate["AWS Translate\n(Neural Regional Translation)"]
+        Polly["Amazon Polly\n(Neural Indian Voice: Kajal)"]
+    end
+
+    %% Client Interactions
+    UI -->|"Hosted by"| Amplify
+    STT -->|"Transcribed Text"| UI
+    UI -->|"GET /schemes"| APIGW
+    UI -->|"POST /chat & /eligibility"| APIGW
+    UI -->|"Plays Audio Stream"| TTS
+
+    %% Routing
+    APIGW -->|"Route /schemes"| FilterFn
+    APIGW -->|"Route /chat, /eligibility"| VoiceRagFn
+
+    %% Filter Lambda
+    FilterFn -->|"Scan / Query"| DDB_Schemes
+
+    %% Voice RAG Lambda
+    VoiceRagFn -->|"Session Context"| DDB_Sessions
+    VoiceRagFn -->|"1. Vector Search Query"| BedrockKB
+    BedrockKB -->|"Embeddings"| TitanEmbed
+    BedrockKB -->|"PDF Chunks"| S3_Docs
+
+    VoiceRagFn -.->|"2a. LLM Inference (when active)"| Nova
+    VoiceRagFn -->|"2b. Grounded Direct Synthesis"| VoiceRagFn
+    VoiceRagFn -->|"3. Localize to 9 languages"| Translate
+    VoiceRagFn -->|"4. Speech Synthesis"| Polly
+    Polly -->|"Store MP3"| S3_Audio
+    VoiceRagFn -->|"5. Generate Presigned URL"| S3_Audio
+    VoiceRagFn -->|"6. Generate Presigned PDF URL"| S3_Docs

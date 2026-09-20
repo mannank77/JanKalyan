@@ -1,12 +1,15 @@
 import {
   AlertTriangle,
   FileText,
+  HelpCircle,
   Loader2,
   Mic,
   MicOff,
   Pause,
   Play,
+  RotateCcw,
   Send,
+  Sparkles,
   Volume2,
   X,
 } from "lucide-react";
@@ -19,16 +22,76 @@ type VoiceDrawerProps = {
   language: Language;
   schemeId?: string;
   schemeName?: string;
+  autoStart?: boolean;
   onClose: () => void;
 };
 
-export function VoiceDrawer({ language, schemeId, schemeName, onClose }: VoiceDrawerProps) {
+// Sample questions tailored to language
+const sampleQuestionsByLang: Record<string, string[]> = {
+  English: [
+    "Am I eligible for PM-KISAN scheme?",
+    "What documents are required to apply?",
+    "How much financial subsidy will I receive?",
+  ],
+  Hindi: [
+    "क्या मैं पीएम-किसान योजना के लिए पात्र हूँ?",
+    "आवेदन करने के लिए कौन से दस्तावेज़ चाहिए?",
+    "इस योजना में कितनी सब्सिडी या सहायता मिलती है?",
+  ],
+  Bengali: [
+    "আমি কি এই প্রকল্পের জন্য যোগ্য?",
+    "আবেদনের জন্য কোন নথিপত্র লাগবে?",
+    "কত টাকা আর্থিক সুবিধা পাওয়া যাবে?",
+  ],
+  Marathi: [
+    "मी या योजनेसाठी पात्र आहे का?",
+    "अर्ज करण्यासाठी कोणती कागदपत्रे लागतील?",
+    "किती अनुदान किंवा आर्थिक मदत मिळते?",
+  ],
+  Telugu: [
+    "నేను ఈ పథకానికి అర్హుడనా?",
+    "దరఖాస్తుకు ఏ పత్రాలు అవసరం?",
+    "ఎంత ఆర్థిక సహాయం లభిస్తుంది?",
+  ],
+  Tamil: [
+    "நான் இந்த திட்டத்திற்கு தகுதியானவரா?",
+    "விண்ணப்பிக்க என்ன ஆவணங்கள் தேவை?",
+    "எவ்வளவு நிதி உதவி கிடைக்கும்?",
+  ],
+  Gujarati: [
+    "શું હું આ યોજના માટે પાત્ર છું?",
+    "અરજી કરવા કયા દસ્તાવેજોની જરૂર પડશે?",
+    "કેટલી સબસિડી કે સહાય મળે છે?",
+  ],
+  Urdu: [
+    "کیا میں اس اسکیم کے لیے اہل ہوں؟",
+    "درخواست کے لیے کون سے دستاویزات درکار ہیں؟",
+    "کتنی مالی امداد ملتی ہے؟",
+  ],
+  Kannada: [
+    "ನಾನು ಈ ಯೋಜನೆಗೆ ಅರ್ಹನೇ?",
+    "ಅರ್ಜಿ ಸಲ್ಲಿಸಲು ಯಾವ ದಾಖಲೆಗಳು ಬೇಕು?",
+    "ಎಷ್ಟು ಹಣಕಾಸಿನ ನೆರವು ಸಿಗುತ್ತದೆ?",
+  ],
+};
+
+export function VoiceDrawer({
+  language,
+  schemeId,
+  schemeName,
+  autoStart = false,
+  onClose,
+}: VoiceDrawerProps) {
   const [query, setQuery] = useState("");
   const [conversation, setConversation] = useState<
     { role: "user" | "assistant"; text: string; data?: ChatResponse }[]
   >([]);
   const [playing, setPlaying] = useState(false);
   const [recognizing, setRecognizing] = useState(false);
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  const [interimQuery, setInterimQuery] = useState("");
+  const [isVoiceTriggered, setIsVoiceTriggered] = useState(false);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -74,44 +137,6 @@ export function VoiceDrawer({ language, schemeId, schemeName, onClose }: VoiceDr
     };
   }, []);
 
-  const handleSubmit = useCallback(() => {
-    const q = query.trim();
-    if (!q || chat.isPending) return;
-
-    if (recognizing && recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch {
-        // ignore
-      }
-      setRecognizing(false);
-    }
-
-    setConversation((prev) => [...prev, { role: "user", text: q }]);
-    setQuery("");
-
-    chat.mutate(
-      { query: q, scheme_id: schemeId, language: language.langCode, audio: true },
-      {
-        onSuccess: (data) => {
-          setConversation((prev) => [...prev, { role: "assistant", text: data.answer, data }]);
-        },
-        onError: (err) => {
-          setConversation((prev) => [
-            ...prev,
-            {
-              role: "assistant",
-              text: `Sorry, I could not get a response. ${err.message}`,
-            },
-          ]);
-        },
-      },
-    );
-
-    // Refocus the input
-    setTimeout(() => inputRef.current?.focus(), 50);
-  }, [query, chat, schemeId, language.langCode, recognizing]);
-
   const playAudio = useCallback((url: string) => {
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
@@ -122,8 +147,12 @@ export function VoiceDrawer({ language, schemeId, schemeName, onClose }: VoiceDr
     const audio = new Audio(url);
     audioRef.current = audio;
     audio.addEventListener("ended", () => setPlaying(false));
-    audio.addEventListener("error", () => setPlaying(false));
-    audio.play();
+    audio.addEventListener("error", () => {
+      setPlaying(false);
+    });
+    audio.play().catch(() => {
+      setPlaying(false);
+    });
     setPlaying(true);
   }, []);
 
@@ -133,7 +162,7 @@ export function VoiceDrawer({ language, schemeId, schemeName, onClose }: VoiceDr
         audioRef.current.pause();
         setPlaying(false);
       } else {
-        audioRef.current.play();
+        audioRef.current.play().catch(() => setPlaying(false));
         setPlaying(true);
       }
       return;
@@ -167,49 +196,207 @@ export function VoiceDrawer({ language, schemeId, schemeName, onClose }: VoiceDr
     [language.langCode, playAudio],
   );
 
-  // Toggle browser speech-to-text recognition
-  const toggleSpeechRecognition = () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Voice input is not supported in this browser. Please use Chrome, Edge, or Safari.");
-      return;
-    }
+  const handleSubmitWithText = useCallback(
+    (rawText: string, fromVoice = false) => {
+      const q = rawText.trim();
+      if (!q || chat.isPending) return;
 
-    if (recognizing) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+        setRecognizing(false);
+      }
+
+      setConversation((prev) => [...prev, { role: "user", text: q }]);
+      setQuery("");
+      setInterimQuery("");
+      setSpeechError(null);
+
+      chat.mutate(
+        { query: q, scheme_id: schemeId, language: language.langCode, audio: true },
+        {
+          onSuccess: (data) => {
+            setConversation((prev) => [...prev, { role: "assistant", text: data.answer, data }]);
+            // If the query was triggered by voice, speak the answer back aloud!
+            if (fromVoice || isVoiceTriggered) {
+              if (data.audio_url) {
+                playAudio(data.audio_url);
+              } else {
+                speakText(data.answer);
+              }
+            }
+          },
+          onError: (err) => {
+            setConversation((prev) => [
+              ...prev,
+              {
+                role: "assistant",
+                text: `Sorry, I could not get a response. ${err.message}`,
+              },
+            ]);
+          },
+        },
+      );
+
+      setTimeout(() => inputRef.current?.focus(), 50);
+    },
+    [chat, schemeId, language.langCode, isVoiceTriggered, playAudio, speakText],
+  );
+
+  const handleSubmit = useCallback(() => {
+    handleSubmitWithText(query, false);
+  }, [query, handleSubmitWithText]);
+
+  // Robust speech-to-text recognition
+  const stopSpeechRecognition = useCallback(() => {
+    if (recognitionRef.current) {
       try {
-        recognitionRef.current?.stop();
+        recognitionRef.current.stop();
       } catch {
         // ignore
       }
-      setRecognizing(false);
+    }
+    setRecognizing(false);
+    setInterimQuery("");
+  }, []);
+
+  const startSpeechRecognition = useCallback(async () => {
+    setSpeechError(null);
+
+    // 1. Check browser speech support
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSpeechError(
+        "Voice input requires Web Speech API support. Please use Google Chrome, Microsoft Edge, Safari, or Brave.",
+      );
       return;
+    }
+
+    // 2. Request mic permission proactively to trigger browser dialog if needed
+    if (navigator.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+      } catch (err: unknown) {
+        const error = err as { name?: string };
+        if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+          setSpeechError(
+            "Microphone access blocked. Please click the lock/camera icon in your address bar and allow microphone permissions.",
+          );
+          setRecognizing(false);
+          return;
+        }
+      }
+    }
+
+    // 3. Stop existing recognition
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
     }
 
     try {
       const rec = new SpeechRecognition();
-      rec.lang = language.langCode;
-      rec.continuous = false;
+      rec.lang = language.langCode || "hi-IN";
+      rec.continuous = true;
       rec.interimResults = true;
 
-      rec.onstart = () => setRecognizing(true);
+      rec.onstart = () => {
+        setRecognizing(true);
+        setIsVoiceTriggered(true);
+        setSpeechError(null);
+        setInterimQuery("");
+      };
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       rec.onresult = (event: any) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const transcript = Array.from(event.results).map((r: any) => r[0].transcript).join("");
-        setQuery(transcript);
+        let finalStr = "";
+        let interimStr = "";
+        for (let i = 0; i < event.results.length; i++) {
+          const res = event.results[i];
+          if (res.isFinal) {
+            finalStr += res[0].transcript + " ";
+          } else {
+            interimStr += res[0].transcript;
+          }
+        }
+        const fullTranscript = (finalStr + interimStr).trim();
+        if (fullTranscript) {
+          setQuery(fullTranscript);
+          setInterimQuery(interimStr);
+        }
       };
-      rec.onerror = () => {
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rec.onerror = (event: any) => {
+        console.warn("Speech recognition error:", event.error);
+        if (event.error === "no-speech") {
+          // Keep listening rather than failing immediately
+          return;
+        }
+        if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+          setSpeechError("Microphone permission denied. Please allow microphone in browser settings.");
+          setRecognizing(false);
+        } else if (event.error === "language-not-supported") {
+          // Attempt fallback to Hindi or English
+          console.warn(`Language ${language.langCode} not supported for STT, falling back to hi-IN`);
+          try {
+            rec.lang = "hi-IN";
+            rec.start();
+            return;
+          } catch {
+            setSpeechError(`Voice input is not supported in ${language.name} by this browser.`);
+            setRecognizing(false);
+          }
+        } else if (event.error === "network") {
+          setSpeechError("Speech recognition network error. Please check your connection or type your question.");
+          setRecognizing(false);
+        } else if (event.error === "audio-capture") {
+          setSpeechError("No microphone found. Please connect an audio input device.");
+          setRecognizing(false);
+        } else {
+          setRecognizing(false);
+        }
+      };
+
+      rec.onend = () => {
         setRecognizing(false);
+        setInterimQuery("");
       };
-      rec.onend = () => setRecognizing(false);
 
       recognitionRef.current = rec;
       rec.start();
-    } catch {
+    } catch (err) {
+      console.error("Speech recognition startup error:", err);
       setRecognizing(false);
+      setSpeechError("Could not start microphone. Please try again or type your question below.");
     }
-  };
+  }, [language.langCode, language.name]);
+
+  const toggleSpeechRecognition = useCallback(() => {
+    if (recognizing) {
+      stopSpeechRecognition();
+    } else {
+      startSpeechRecognition();
+    }
+  }, [recognizing, stopSpeechRecognition, startSpeechRecognition]);
+
+  // Handle auto-start on mount if requested
+  useEffect(() => {
+    if (autoStart) {
+      const timer = setTimeout(() => {
+        startSpeechRecognition();
+      }, 350);
+      return () => clearTimeout(timer);
+    }
+  }, [autoStart, startSpeechRecognition]);
 
   // Find the last assistant message
   const lastAssistantMsg = [...conversation].reverse().find((m) => m.role === "assistant");
@@ -256,15 +443,38 @@ export function VoiceDrawer({ language, schemeId, schemeName, onClose }: VoiceDr
           <div className="space-y-3">
             {/* Initial prompt */}
             {conversation.length === 0 && (
-              <div className="max-w-[92%] rounded-2xl rounded-bl-md border border-[#ded1b9] bg-[#f8f0e2] p-4">
-                <p className="text-[1.1rem] font-semibold leading-7 text-[#263d35]">
-                  {language.greeting}.{" "}
-                  {schemeName
-                    ? `Ask me anything about ${schemeName} — eligibility, benefits, documents, or next steps.`
-                    : language.supportLine}
-                </p>
-                <div className="mt-3 flex items-center gap-2 text-xs font-bold text-[#897d6c]">
-                  <Volume2 size={15} className="text-[#b85c38]" /> {t.drawerReadyHelp} {language.name}
+              <div className="space-y-4">
+                <div className="max-w-[92%] rounded-2xl rounded-bl-md border border-[#ded1b9] bg-[#f8f0e2] p-4">
+                  <p className="text-[1.1rem] font-semibold leading-7 text-[#263d35]">
+                    {language.greeting}.{" "}
+                    {schemeName
+                      ? `Ask me anything about ${schemeName} — eligibility, benefits, documents, or next steps.`
+                      : language.supportLine}
+                  </p>
+                  <div className="mt-3 flex items-center gap-2 text-xs font-bold text-[#897d6c]">
+                    <Volume2 size={15} className="text-[#b85c38]" /> {t.drawerReadyHelp} {language.name}
+                  </div>
+                </div>
+
+                {/* Quick Suggestion Chips */}
+                <div className="space-y-2">
+                  <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-[#8a7f6e]">
+                    <Sparkles size={14} className="text-[#b85c38]" />
+                    {language.name === "Hindi" ? "सुझाए गए सवाल (क्लिक करें):" : "Suggested questions (tap to ask):"}
+                  </p>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                    {(sampleQuestionsByLang[language.name] || sampleQuestionsByLang.English).map((chip, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleSubmitWithText(chip, false)}
+                        disabled={chat.isPending}
+                        className="rounded-xl border border-[#d9cbb2] bg-[#fdf8ee] px-3.5 py-2.5 text-left text-xs font-semibold text-[#3b4c42] shadow-xs transition hover:border-[#b85c38] hover:bg-[#faeed6] disabled:opacity-50"
+                      >
+                        "{chip}"
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -385,17 +595,61 @@ export function VoiceDrawer({ language, schemeId, schemeName, onClose }: VoiceDr
           </div>
         )}
 
+        {/* Speech Error Banner */}
+        {speechError && (
+          <div className="mx-6 mb-2 flex items-start justify-between gap-3 rounded-xl border border-[#f3c1b6] bg-[#fef2f0] p-3 text-xs text-[#9d3623]">
+            <div className="flex items-start gap-2">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0 text-[#c24128]" />
+              <p className="leading-5">{speechError}</p>
+            </div>
+            <button
+              type="button"
+              onClick={startSpeechRecognition}
+              className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[#fbdcd6] px-2 py-1 font-bold text-[#8a2a18] hover:bg-[#f6c3b9]"
+            >
+              <RotateCcw size={12} /> Retry
+            </button>
+          </div>
+        )}
+
+        {/* Live Voice Status Indicator */}
+        {recognizing && (
+          <div className="mx-6 mb-2 flex flex-col gap-1.5 rounded-xl border border-[#e5c7a4] bg-[#fdf5e7] p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-bold text-[#b85c38]">
+                <span className="relative flex h-3 w-3">
+                  <span className="jr-pulse-ring absolute inset-0 rounded-full bg-[#b85c38]" />
+                  <span className="relative h-3 w-3 rounded-full bg-[#b85c38]" />
+                </span>
+                <span>
+                  {language.name === "Hindi" ? "सुन रहा हूँ... बोलिए" : `Listening in ${language.name}... Speak now`}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={stopSpeechRecognition}
+                className="text-xs font-bold text-[#8a7258] underline hover:text-[#524433]"
+              >
+                Stop
+              </button>
+            </div>
+            {query && (
+              <div className="mt-1 flex items-center justify-between gap-2 border-t border-[#ebdac4] pt-2 text-xs text-[#394a40]">
+                <span className="truncate italic font-medium">"{query}"</span>
+                <button
+                  type="button"
+                  onClick={() => handleSubmitWithText(query, true)}
+                  className="shrink-0 rounded-md bg-[#b85c38] px-2 py-1 font-bold text-white shadow-xs hover:bg-[#9e4a2b]"
+                >
+                  Send now
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Input area */}
         <div className="shrink-0 border-t border-[#eadfce] bg-[#f3e8d3] px-6 py-4">
-          {recognizing && (
-            <div className="mb-2 flex items-center gap-2 text-xs font-bold text-[#b85c38]">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="jr-pulse-ring absolute inset-0 rounded-full bg-[#b85c38]" />
-                <span className="relative h-2.5 w-2.5 rounded-full bg-[#b85c38]" />
-              </span>
-              <span>Listening in {language.name}... Speak your question</span>
-            </div>
-          )}
           <form
             onSubmit={(e) => {
               e.preventDefault();
