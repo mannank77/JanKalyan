@@ -305,14 +305,20 @@ export function VoiceDrawer({
     try {
       const rec = new SpeechRecognition();
       rec.lang = language.langCode || "hi-IN";
-      rec.continuous = true;
+      // Setting continuous to false prevents the browser from dropping the websocket and throwing "network" error
+      rec.continuous = false;
       rec.interimResults = true;
+      rec.maxAlternatives = 1;
+
+      let capturedText = "";
+      let retried = false;
 
       rec.onstart = () => {
         setRecognizing(true);
         setIsVoiceTriggered(true);
         setSpeechError(null);
         setInterimQuery("");
+        capturedText = "";
       };
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -329,6 +335,7 @@ export function VoiceDrawer({
         }
         const fullTranscript = (finalStr + interimStr).trim();
         if (fullTranscript) {
+          capturedText = fullTranscript;
           setQuery(fullTranscript);
           setInterimQuery(interimStr);
         }
@@ -338,14 +345,44 @@ export function VoiceDrawer({
       rec.onerror = (event: any) => {
         console.warn("Speech recognition error:", event.error);
         if (event.error === "no-speech") {
-          // Keep listening rather than failing immediately
+          // Normal timeout when silence, keep listening or prompt user
+          setRecognizing(false);
           return;
         }
+
+        if (event.error === "network") {
+          // If a regional dialect caused the network error, retry once with hi-IN or en-IN
+          if (!retried && rec.lang !== "hi-IN" && rec.lang !== "en-IN") {
+            retried = true;
+            try {
+              rec.lang = "hi-IN";
+              rec.start();
+              return;
+            } catch {
+              // ignore
+            }
+          }
+
+          // Check if running on Brave or behind an ad blocker
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const isBrave = Boolean((navigator as any).brave);
+          if (isBrave) {
+            setSpeechError(
+              "Brave browser blocks speech recognition by default. To enable: open brave://settings/system and toggle 'Use Google services for speech recognition', or use Google Chrome / Microsoft Edge.",
+            );
+          } else {
+            setSpeechError(
+              "Speech recognition network error. The browser speech server could not be reached. Please check your internet/VPN, or tap a suggested question below.",
+            );
+          }
+          setRecognizing(false);
+          return;
+        }
+
         if (event.error === "not-allowed" || event.error === "service-not-allowed") {
           setSpeechError("Microphone permission denied. Please allow microphone in browser settings.");
           setRecognizing(false);
         } else if (event.error === "language-not-supported") {
-          // Attempt fallback to Hindi or English
           console.warn(`Language ${language.langCode} not supported for STT, falling back to hi-IN`);
           try {
             rec.lang = "hi-IN";
@@ -355,9 +392,6 @@ export function VoiceDrawer({
             setSpeechError(`Voice input is not supported in ${language.name} by this browser.`);
             setRecognizing(false);
           }
-        } else if (event.error === "network") {
-          setSpeechError("Speech recognition network error. Please check your connection or type your question.");
-          setRecognizing(false);
         } else if (event.error === "audio-capture") {
           setSpeechError("No microphone found. Please connect an audio input device.");
           setRecognizing(false);
@@ -369,6 +403,12 @@ export function VoiceDrawer({
       rec.onend = () => {
         setRecognizing(false);
         setInterimQuery("");
+        // If a valid question was spoken and captured, automatically submit it to RAG!
+        if (capturedText && capturedText.trim().length > 2) {
+          const toSubmit = capturedText.trim();
+          capturedText = "";
+          handleSubmitWithText(toSubmit, true);
+        }
       };
 
       recognitionRef.current = rec;
@@ -378,7 +418,7 @@ export function VoiceDrawer({
       setRecognizing(false);
       setSpeechError("Could not start microphone. Please try again or type your question below.");
     }
-  }, [language.langCode, language.name]);
+  }, [language.langCode, language.name, handleSubmitWithText]);
 
   const toggleSpeechRecognition = useCallback(() => {
     if (recognizing) {
