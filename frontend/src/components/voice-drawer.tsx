@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getUITranslations, type Language } from "@/data/jansahayak";
+import { getUITranslations, type Language } from "@/data/jankalyan";
 import { useChat } from "@/hooks/useChat";
 import type { ChatResponse } from "@/lib/api";
 

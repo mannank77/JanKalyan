@@ -11,7 +11,7 @@ const API_BASE =
 // ---- Session helpers --------------------------------------------------------
 
 function getSessionId(): string {
-  const KEY = "jansahayak_session_id";
+  const KEY = "jankalyan_session_id";
   let id = localStorage.getItem(KEY);
   if (!id) {
     id = crypto.randomUUID();

@@ -30,7 +30,7 @@ import {
   getUITranslations,
   getLocalizedScheme,
   type Language,
-} from "@/data/jansahayak";
+} from "@/data/jankalyan";
 import { useSchemes } from "@/hooks/useSchemes";
 import type { ApiScheme } from "@/lib/api";
 import { Toaster } from "@/components/ui/toaster";
@@ -120,7 +120,7 @@ function Home() {
               <Landmark size={21} aria-hidden="true" />
             </span>
             <span>
-              <span className="block font-bold tracking-[-.03em] text-[#263d35]">JanSahayak</span>
+              <span className="block font-bold tracking-[-.03em] text-[#263d35]">JanKalyan</span>
               <span className="block text-[10px] font-bold uppercase tracking-[.18em] text-[#8a887c]">
                 {t.brandSlogan}
               </span>
