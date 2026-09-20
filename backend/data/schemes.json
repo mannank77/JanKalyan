@@ -1,0 +1,51 @@
+[
+  {
+    "scheme_id": "PM-KUSUM",
+    "name": "PM-KUSUM Solar Pump Scheme",
+    "description": "Provides subsidised standalone solar agriculture pumps and solarisation of grid-connected pumps for farmers.",
+    "states": ["All India"],
+    "categories": ["Farmer", "Small Landholder"],
+    "primary_category": "Farmer",
+    "eligibility": {
+      "land_size_max_ha": 2,
+      "income_limit_inr": null,
+      "age_min": 18,
+      "age_max": null
+    },
+    "benefits": {
+      "central_subsidy": "30%",
+      "state_subsidy": "30%",
+      "farmer_share": "40%",
+      "pump_capacity": "Up to 7.5 HP"
+    },
+    "documents": ["Aadhaar Card", "Land Record (7/12)", "Bank Passbook", "Passport Photo"],
+    "application_url": "https://pmkusum.mnre.gov.in",
+    "deadline": null,
+    "source_pdf": "s3:///pdfs/PM-KUSUM-Guidelines.pdf",
+    "last_updated": "2024-06-15"
+  },
+  {
+    "scheme_id": "PM-KISAN",
+    "name": "Pradhan Mantri Kisan Samman Nidhi",
+    "description": "Income support of Rs 6000 per year in three equal instalments to all landholding farmer families.",
+    "states": ["All India"],
+    "categories": ["Farmer", "Small Landholder"],
+    "primary_category": "Farmer",
+    "eligibility": {
+      "land_size_max_ha": null,
+      "income_limit_inr": null,
+      "age_min": 18,
+      "age_max": null
+    },
+    "benefits": {
+      "annual_amount": "Rs 6,000",
+      "instalments": "3 x Rs 2,000",
+      "transfer_mode": "Direct Benefit Transfer"
+    },
+    "documents": ["Aadhaar Card", "Land Record", "Bank Account details"],
+    "application_url": "https://pmkisan.gov.in",
+    "deadline": null,
+    "source_pdf": "s3:///pdfs/PM-KISAN-Guidelines.pdf",
+    "last_updated": "2024-06-15"
+  }
+]

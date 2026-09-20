@@ -1,0 +1,12 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "scheme-navigator"
+resolve_s3 = true
+s3_prefix = "scheme-navigator"
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "KnowledgeBaseId=\"HDGCKVKYEE\" BedrockModelId=\"amazon.nova-pro-v1:0\" FallbackModelId=\"amazon.nova-lite-v1:0\" PollyVoiceId=\"Kajal\" EmbeddingModelId=\"amazon.titan-embed-text-v1\" AllowedOrigin=\"*\""
+image_repositories = []
+
+[default.global.parameters]
+region = "us-east-1"

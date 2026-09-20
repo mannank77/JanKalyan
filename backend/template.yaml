@@ -1,0 +1,305 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Voice-First Government Scheme Navigator.
+  Uses Amazon Bedrock Nova Pro + Bedrock Knowledge Bases (RAG).
+  No Anthropic dependencies.
+
+Parameters:
+  KnowledgeBaseId:
+    Type: String
+    Default: "HDGCKVKYEE"
+    Description: Bedrock Knowledge Base ID (GovSchemesKB)
+
+  BedrockModelId:
+    Type: String
+    Default: amazon.nova-pro-v1:0
+    AllowedValues:
+      - amazon.nova-pro-v1:0
+      - amazon.nova-lite-v1:0
+      - amazon.nova-micro-v1:0
+      - amazon.titan-text-premier-v1:0
+      - amazon.titan-text-express-v1:0
+      - meta.llama3-3-70b-instruct-v1:0
+    Description: Primary foundation model for RAG answers
+
+  FallbackModelId:
+    Type: String
+    Default: amazon.nova-lite-v1:0
+    AllowedValues:
+      - amazon.nova-lite-v1:0
+      - amazon.nova-micro-v1:0
+      - amazon.titan-text-express-v1:0
+    Description: Cheaper fallback if primary throttles or fails
+
+  PollyVoiceId:
+    Type: String
+    Default: Kajal
+    AllowedValues:
+      - Kajal
+      - Aditi
+      - Raveena
+      - Zeina
+      - Joanna
+    Description: Polly neural voice for Hindi/Indian English responses
+
+  EmbeddingModelId:
+    Type: String
+    Default: amazon.titan-embed-text-v1
+    AllowedValues:
+      - amazon.titan-embed-text-v1
+      - amazon.titan-embed-text-v2:0
+    Description: Embedding model for Bedrock Knowledge Base
+
+  AllowedOrigin:
+    Type: String
+    Default: "*"
+    Description: CORS origin. Set to your frontend domain in production.
+
+Globals:
+  Function:
+    Runtime: python3.14
+    Timeout: 30
+    MemorySize: 512
+    Architectures: [arm64]
+    Tracing: Active
+    Environment:
+      Variables:
+        POWERTOOLS_SERVICE_NAME: scheme-navigator
+        LOG_LEVEL: INFO
+
+Resources:
+
+  # ============================================================================
+  # STORAGE
+  # ============================================================================
+
+  SchemeDocsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "gov-schemes-docs-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [GET, HEAD]
+            AllowedOrigins: [!Ref AllowedOrigin]
+            AllowedHeaders: ["*"]
+            MaxAge: 3000
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldPdfs
+            Status: Enabled
+            ExpirationInDays: 365
+
+  AudioCacheBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "gov-schemes-audio-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldAudio
+            Status: Enabled
+            ExpirationInDays: 7
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [GET, HEAD]
+            AllowedOrigins: [!Ref AllowedOrigin]
+            AllowedHeaders: ["*"]
+            MaxAge: 3000
+
+  # ============================================================================
+  # DATABASE
+  # ============================================================================
+
+  SchemesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-GovSchemes"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: scheme_id
+          AttributeType: S
+        - AttributeName: primary_category
+          AttributeType: S
+      KeySchema:
+        - AttributeName: scheme_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: CategoryIndex
+          KeySchema:
+            - AttributeName: primary_category
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+  SessionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-Sessions"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: session_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: session_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ============================================================================
+  # API
+  # ============================================================================
+
+  SchemeApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: prod
+      CorsConfiguration:
+        AllowOrigins: [!Ref AllowedOrigin]
+        AllowHeaders: [content-type, x-session-id]
+        AllowMethods: [GET, POST, OPTIONS]
+        MaxAge: 600
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","path":"$context.path","status":"$context.status","latency":"$context.responseLatency"}'
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigw/${AWS::StackName}"
+      RetentionInDays: 7
+
+  # ============================================================================
+  # LAMBDA 1: FILTER SCHEMES (read-only DynamoDB)
+  # ============================================================================
+
+  FilterSchemesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-filter-schemes"
+      CodeUri: src/filter_schemes/
+      Handler: app.lambda_handler
+      Timeout: 10
+      Environment:
+        Variables:
+          SCHEMES_TABLE: !Ref SchemesTable
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SchemesTable
+      Events:
+        GetSchemes:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SchemeApi
+            Path: /schemes
+            Method: GET
+        GetSchemeById:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SchemeApi
+            Path: /schemes/{scheme_id}
+            Method: GET
+
+  # ============================================================================
+  # LAMBDA 2: VOICE + RAG (Bedrock + Polly + S3 + DynamoDB sessions)
+  # ============================================================================
+
+  VoiceRagFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-voice-rag"
+      CodeUri: src/voice_rag/
+      Handler: app.lambda_handler
+      Timeout: 60
+      MemorySize: 1024
+      Environment:
+        Variables:
+          KB_ID: !Ref KnowledgeBaseId
+          MODEL_ID: !Ref BedrockModelId
+          FALLBACK_MODEL_ID: !Ref FallbackModelId
+          AUDIO_BUCKET: !Ref AudioCacheBucket
+          SESSIONS_TABLE: !Ref SessionsTable
+          POLLY_VOICE: !Ref PollyVoiceId
+          ALLOWED_ORIGIN: !Ref AllowedOrigin
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref AudioCacheBucket
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SessionsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:RetrieveAndGenerate
+                - bedrock:Retrieve
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - polly:SynthesizeSpeech
+                - translate:TranslateText
+                - comprehend:DetectDominantLanguage
+              Resource: "*"
+      Events:
+        PostEligibility:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SchemeApi
+            Path: /eligibility
+            Method: POST
+        PostChat:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SchemeApi
+            Path: /chat
+            Method: POST
+
+Outputs:
+  ApiBaseUrl:
+    Description: "Give this URL to the frontend engineer"
+    Value: !Sub "https://${SchemeApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiUrl"
+
+  DocsBucket:
+    Description: "Upload scheme PDFs to s3://<this>/pdfs/, then create the Bedrock KB pointing here"
+    Value: !Ref SchemeDocsBucket
+
+  AudioBucket:
+    Description: "Polly audio cache (auto-managed)"
+    Value: !Ref AudioCacheBucket
+
+  SchemesTableName:
+    Description: "DynamoDB table for scheme metadata"
+    Value: !Ref SchemesTable
+
+  ModelInUse:
+    Description: "Currently configured primary model"
+    Value: !Ref BedrockModelId
+
+  NextStep:
+    Description: "After deploy"
+    Value: >
+      1) Upload PDFs to s3://<DocsBucket>/pdfs/.
+      2) Bedrock Console -> Knowledge Bases -> Create -> S3 = that prefix.
+      3) Wait for KB sync to Complete.
+      4) sam deploy --parameter-overrides KnowledgeBaseId=<your-kb-id>
