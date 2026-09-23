@@ -2,11 +2,7 @@
 // Centralized API client for the Scheme Navigator backend
 // ---------------------------------------------------------------------------
 
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL ??
-  (import.meta.env.DEV
-    ? "/api"
-    : "https://qo950rv93f.execute-api.us-east-1.amazonaws.com/prod");
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 // ---- Session helpers --------------------------------------------------------
 

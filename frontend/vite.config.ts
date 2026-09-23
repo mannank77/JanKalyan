@@ -56,10 +56,12 @@ export default defineConfig({
       strict: true,
     },
     proxy: {
-      // Proxy /api requests to the deployed AWS backend during local dev
+      // Proxy /api requests to the backend during local dev (configured via env var)
       '/api': {
         target:
-          'https://qo950rv93f.execute-api.us-east-1.amazonaws.com/prod',
+          process.env.VITE_API_BASE_URL ||
+          process.env.API_TARGET_URL ||
+          'http://127.0.0.1:3000',
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api/, ''),
         secure: true,

@@ -23,12 +23,24 @@ class DecimalEncoder(json.JSONEncoder):
         return super().default(o)
 
 
+def _safe_float(val: str | None) -> float | None:
+    if val is None:
+        return None
+    try:
+        num = float(val)
+        return num if num >= 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
 def _response(status: int, body: dict) -> dict:
     return {
         "statusCode": status,
         "headers": {
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": ORIGIN,
+            "Access-Control-Allow-Headers": "content-type,x-session-id",
+            "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
             "Cache-Control": "max-age=60",
         },
         "body": json.dumps(body, cls=DecimalEncoder),
@@ -36,7 +48,7 @@ def _response(status: int, body: dict) -> dict:
 
 
 def _score(item: dict, state: str | None, category: str | None,
-           land_acres: str | None, income: str | None, age: str | None):
+           land_acres: float | None, income: float | None, age: float | None):
     """Weighted relevance score 0.0 - 1.0. Returns (score, reasons) or (0.0, [reason])."""
     score, reasons = 0.0, []
 
@@ -54,7 +66,7 @@ def _score(item: dict, state: str | None, category: str | None,
     if land_acres is not None:
         max_ha = elig.get("land_size_max_ha")
         if max_ha is not None:
-            user_ha = float(land_acres) * ACRE_TO_HECTARE
+            user_ha = land_acres * ACRE_TO_HECTARE
             if user_ha <= float(max_ha):
                 score += 0.15
                 reasons.append("Land size within limit")
@@ -64,7 +76,7 @@ def _score(item: dict, state: str | None, category: str | None,
     if income is not None:
         max_inc = elig.get("income_limit_inr")
         if max_inc is not None:
-            if float(income) <= float(max_inc):
+            if income <= float(max_inc):
                 score += 0.10
                 reasons.append("Income within limit")
             else:
@@ -73,9 +85,9 @@ def _score(item: dict, state: str | None, category: str | None,
     if age is not None:
         min_age = elig.get("age_min")
         max_age = elig.get("age_max")
-        if min_age and float(age) < float(min_age):
+        if min_age and age < float(min_age):
             return 0.0, ["Below minimum age"]
-        if max_age and float(age) > float(max_age):
+        if max_age and age > float(max_age):
             return 0.0, ["Above maximum age"]
 
     return min(score, 1.0), reasons
@@ -87,18 +99,24 @@ def lambda_handler(event, context):
 
         # ----- GET /schemes/{scheme_id} -----
         if path_params.get("scheme_id"):
-            res = table.get_item(Key={"scheme_id": path_params["scheme_id"]})
+            raw_scheme_id = path_params["scheme_id"]
+            if not isinstance(raw_scheme_id, str) or len(raw_scheme_id) > 64:
+                return _response(400, {"error": "Invalid scheme_id"})
+            res = table.get_item(Key={"scheme_id": raw_scheme_id.strip()})
             if "Item" not in res:
                 return _response(404, {"error": "Scheme not found"})
             return _response(200, {"scheme": res["Item"]})
 
         # ----- GET /schemes -----
         q = event.get("queryStringParameters") or {}
-        state = q.get("state")
-        category = q.get("category")
-        land_acres = q.get("land_size")
-        income = q.get("income")
-        age = q.get("age")
+        raw_state = q.get("state")
+        raw_category = q.get("category")
+        state = raw_state[:64].strip() if raw_state else None
+        category = raw_category[:64].strip() if raw_category else None
+
+        land_acres = _safe_float(q.get("land_size"))
+        income = _safe_float(q.get("income"))
+        age = _safe_float(q.get("age"))
 
         filter_expr = None
         if state:
@@ -116,7 +134,7 @@ def lambda_handler(event, context):
             items.extend(resp.get("Items", []))
 
         results = []
-        has_criteria = bool(state or category or land_acres or income or age)
+        has_criteria = bool(state or category or land_acres is not None or income is not None or age is not None)
         for item in items:
             score, reasons = _score(item, state, category, land_acres, income, age)
             if not has_criteria or score >= 0.4:
@@ -141,6 +159,6 @@ def lambda_handler(event, context):
             "schemes": results,
         })
 
-    except Exception as e:
+    except Exception:
         logger.exception("filter_schemes failed")
-        return _response(500, {"error": "Internal error", "detail": str(e)})
+        return _response(500, {"error": "Internal server error"})

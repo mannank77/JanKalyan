@@ -4,12 +4,19 @@ import time
 import hashlib
 import logging
 import urllib.parse
+import re
+import uuid
 
 import boto3
 from botocore.exceptions import ClientError
 
 logger = logging.getLogger()
 logger.setLevel(os.environ.get("LOG_LEVEL", "INFO"))
+
+# Security limits & patterns
+MAX_QUERY_LEN = 500
+SCHEME_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 # We need BOTH agent-runtime (for retrieval) and runtime (for generation)
 bedrock_agent = boto3.client("bedrock-agent-runtime")
@@ -19,7 +26,7 @@ translate_client = boto3.client("translate")
 s3 = boto3.client("s3")
 ddb = boto3.resource("dynamodb")
 
-KB_ID = os.environ["KB_ID"]
+KB_ID = os.environ.get("KB_ID", "")
 # Read model IDs from environment (set via SAM template parameters)
 MODEL_ID = os.environ.get("MODEL_ID", "amazon.nova-pro-v1:0")
 FALLBACK_MODEL_ID = os.environ.get("FALLBACK_MODEL_ID", "amazon.nova-lite-v1:0")
@@ -77,13 +84,18 @@ FALLBACK_ANSWER = (
 # ---------------------------------------------------------------------------
 # HELPERS
 # ---------------------------------------------------------------------------
-def _response(status: int, body: dict) -> dict:
+def _response(status: int, body: dict, headers: dict | None = None) -> dict:
+    resp_headers = {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": ORIGIN,
+        "Access-Control-Allow-Headers": "content-type,x-session-id",
+        "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    }
+    if headers:
+        resp_headers.update(headers)
     return {
         "statusCode": status,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": ORIGIN,
-        },
+        "headers": resp_headers,
         "body": json.dumps(body, ensure_ascii=False),
     }
 
@@ -179,12 +191,14 @@ def _synthesize(text: str, lang_code: str = "hi-IN") -> str:
         ExpiresIn=3600,
     )
 
-def _save_session(session_id, query, answer):
+def _save_session(session_id: str, query: str, answer: str):
     if not sessions or not session_id:
         return
     try:
+        # Hash session partition key to prevent user collision or partition injection
+        pk = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32]
         sessions.put_item(Item={
-            "session_id": session_id,
+            "session_id": pk,
             "last_query": query[:500],
             "last_answer": answer[:1000],
             "updated_at": int(time.time()),
@@ -199,6 +213,8 @@ def _save_session(session_id, query, answer):
 # ---------------------------------------------------------------------------
 def _call_bedrock_rag(scoped_query: str, raw_query: str = "", scheme_id: str | None = None):
     # 1. Fetch chunks using the Retrieve API
+    if not KB_ID:
+        raise RuntimeError("Knowledge base is not configured")
     retrieval = bedrock_agent.retrieve(
         knowledgeBaseId=KB_ID,
         retrievalQuery={'text': scoped_query}
@@ -310,17 +326,35 @@ def _call_bedrock_rag(scoped_query: str, raw_query: str = "", scheme_id: str | N
 def lambda_handler(event, context):
     try:
         body = json.loads(event.get("body") or "{}")
-        query = (body.get("query") or "").strip()
+        if "query" not in body or not isinstance(body["query"], str):
+            return _response(400, {"error": "query is required and must be a string"})
+        query = body["query"].strip()
+        if not query:
+            return _response(400, {"error": "query cannot be empty"})
+        if len(query) > MAX_QUERY_LEN:
+            return _response(400, {"error": f"query exceeds maximum allowed length of {MAX_QUERY_LEN} characters"})
+
         scheme_id = body.get("scheme_id")
-        session_id = (
+        if scheme_id:
+            if not isinstance(scheme_id, str) or not SCHEME_ID_PATTERN.match(scheme_id):
+                return _response(400, {"error": "Invalid scheme_id format"})
+
+        raw_session_id = (
             body.get("session_id")
             or (event.get("headers", {}) or {}).get("x-session-id")
         )
-        lang = body.get("language", "hi-IN")
-        want_audio = body.get("audio", True)
+        if raw_session_id and isinstance(raw_session_id, str) and SESSION_ID_PATTERN.match(raw_session_id):
+            session_id = raw_session_id
+        else:
+            session_id = str(uuid.uuid4())
 
-        if not query:
-            return _response(400, {"error": "query is required"})
+        lang = body.get("language", "hi-IN")
+        if not isinstance(lang, str) or len(lang) > 16:
+            lang = "hi-IN"
+
+        want_audio = body.get("audio", True)
+        if not isinstance(want_audio, bool):
+            want_audio = True
 
         scoped = (
             f"Regarding the {scheme_id} scheme: {query}" if scheme_id else query
@@ -353,14 +387,15 @@ def lambda_handler(event, context):
             "citations": citations,
             "audio_url": audio_url,
             "scheme_id": scheme_id,
+            "session_id": session_id,
             "bedrock_session_id": bedrock_session,
             "model_used": model_used,
             "degraded": degraded,
             "disclaimer": (
                 "Guidance only. Verify with the official department before applying."
             ),
-        })
+        }, headers={"x-session-id": session_id})
 
-    except Exception as e:
+    except Exception:
         logger.exception("voice_rag failed")
-        return _response(500, {"error": "Internal error", "detail": str(e)})
+        return _response(500, {"error": "Internal server error"})
